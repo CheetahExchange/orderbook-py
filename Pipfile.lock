@@ -45,6 +45,7 @@
                 "sha256:ff318d29ecbeea8c58d69c91c24d48d7ed4a8d3e829b607e670d118a9a35d5ba"
             ],
             "index": "pypi",
+            "markers": "python_version >= '3.8'",
             "version": "==0.8.1"
         },
         "async-timeout": {
@@ -76,6 +77,7 @@
                 "sha256:ed4802971884ae19d640775ba3b03aa2e7bd5e8fb8dfaed2decce4d0fc48391f"
             ],
             "index": "pypi",
+            "markers": "python_version >= '3.7'",
             "version": "==5.0.1"
         }
     },
