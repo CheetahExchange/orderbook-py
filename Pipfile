@@ -10,5 +10,4 @@ redis = "5.0.1"
 [dev-packages]
 
 [requires]
-
 python_version = "3.9"
