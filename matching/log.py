@@ -15,7 +15,12 @@ class LogType(Enum):
     LogTypeDone = "done"
 
 
-class Base(object):
+class Log(object):
+    def get_seq(self) -> int:
+        return -1
+
+
+class Base(Log):
     def __init__(self, _type: LogType, seq: int, product_id: str, _time: int):
         self.type = _type
         self.sequence = seq

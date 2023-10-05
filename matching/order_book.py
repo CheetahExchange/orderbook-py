@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+import logging
 import sys
 from decimal import Decimal
 from typing import List, Dict
 
+from matching.log import MatchLog, DoneLog, OpenLog
 from models.models import Product, Order
-from models.types import Side, OrderType, TimeInForceType
+from models.types import Side, OrderType, TimeInForceType, DoneReason
 from utils.utils import truncate_decimal
-from utils.window import Window
+from utils.window import Window, WindowException
 from pytreemap import TreeMap
 
 ORDER_ID_WINDOW_CAP = 10000
@@ -164,6 +166,7 @@ class OrderBook(object):
                 break
 
             price = maker_order.price
+            size = Decimal(0)
 
             if taker_order.type == OrderType.OrderTypeLimit or (
                     taker_order.type == OrderType.OrderTypeMarket and taker_order.side == Side.SideSell):
@@ -193,3 +196,155 @@ class OrderBook(object):
             return False
 
         return True
+
+    def apply_order(self, order: Order) -> list:
+        logs = list()
+
+        try:
+            self.order_id_window.put(order.id)
+        except WindowException as ex:
+            logging.error(str(ex))
+            return logs
+
+        taker_order = BookOrder(order)
+
+        if taker_order.type == OrderType.OrderTypeMarket:
+            if taker_order.side == Side.SideBuy:
+                taker_order.price = Decimal(sys.float_info.max)
+            else:
+                taker_order.price = Decimal(0)
+
+        maker_depth = self.depths[taker_order.side.opposite()]
+        for e in iter(maker_depth.queue):
+            maker_order = maker_depth.orders[e.get_value()]
+
+            # check whether there is price crossing between the taker and the maker
+            if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
+                    taker_order.side == Side.SideSell and taker_order.price > maker_order.price):
+                break
+
+            price = maker_order.price
+            size = Decimal(0)
+
+            if taker_order.type == OrderType.OrderTypeLimit or (
+                    taker_order.type == OrderType.OrderTypeMarket and taker_order.side == Side.SideSell):
+                if taker_order.size.is_zero():
+                    break
+
+                # Take the minimum size of taker and maker as trade size
+                size = taker_order.size.min(maker_order.size)
+                # adjust the size of taker order
+                taker_order.size = taker_order.size - size
+            elif taker_order.type == OrderType.OrderTypeMarket and taker_order.size == Side.SideBuy:
+                if taker_order.funds.is_zero():
+                    break
+
+                taker_size = truncate_decimal(taker_order.funds / price, self.product.base_scale)
+                if taker_size.is_zero():
+                    break
+
+                # Take the minimum size of taker and maker as trade size
+                size = taker_size.min(maker_order.size)
+                funds = size * price
+
+                # adjust the funds of taker order
+                taker_order.funds = taker_order.funds - funds
+
+            try:
+                self.depths[taker_order.side.opposite()].decr_size(maker_order.order_id, size)
+            except DepthException as ex:
+                logging.fatal(str(ex))
+
+            # matched, write a log
+            match_log = MatchLog(self.next_log_seq(), self.product.id, self.net_trade_seq(), taker_order, maker_order,
+                                 price, size)
+            logs.append(match_log)
+
+            # maker is filled
+            if maker_order.size.is_zero():
+                done_log = DoneLog(self.next_log_seq(), self.product.id, maker_order, maker_order.size,
+                                   DoneReason.DoneReasonFilled)
+                logs.append(done_log)
+
+        if taker_order.type == OrderType.OrderTypeLimit and taker_order.size > 0:
+            self.depths[taker_order.side.opposite()].add(taker_order)
+            open_log = OpenLog(self.next_log_seq(), self.product.id, taker_order)
+            logs.append(open_log)
+        else:
+            remaining_size = taker_order.size
+            reason = DoneReason.DoneReasonFilled
+
+            if taker_order.type == OrderType.OrderTypeMarket:
+                taker_order.price = Decimal(0)
+                remaining_size = Decimal(0)
+                if (taker_order.side == Side.SideSell and taker_order.size > 0) or (
+                        taker_order.side == Side.SideBuy and taker_order.funds > 0):
+                    reason = DoneReason.DoneReasonCancelled
+
+            done_log = DoneLog(self.next_log_seq(), self.product.id, taker_order, remaining_size, reason)
+            logs.append(done_log)
+
+        return logs
+
+    def cancel_order(self, order: Order) -> list:
+        logs = list()
+
+        try:
+            self.order_id_window.put(order.id)
+        except WindowException as ex:
+            pass
+
+        book_order = self.depths[order.side].orders.get(order.id)
+        if book_order is None:
+            return logs
+
+        remaining_size = book_order.size
+        try:
+            self.depths[order.side].decr_size(order.id, book_order.size)
+        except DepthException as ex:
+            logging.fatal(str(ex))
+
+        done_log = DoneLog(self.next_log_seq(), self.product.id, book_order, remaining_size,
+                           DoneReason.DoneReasonCancelled)
+        logs.append(done_log)
+        return logs
+
+    def nullify_order(self, order: Order) -> list:
+        logs = list()
+
+        try:
+            self.order_id_window.put(order.id)
+        except WindowException as ex:
+            pass
+
+        book_order = BookOrder(order)
+        done_log = DoneLog(self.next_log_seq(), self.product.id, book_order, order.size,
+                           DoneReason.DoneReasonCancelled)
+        logs.append(done_log)
+        return logs
+
+    def snapshot(self) -> OrderBookSnapshot:
+        snapshot = OrderBookSnapshot(self.product.id, list(), self.trade_seq, self.log_seq, self.order_id_window)
+        for order in self.depths[Side.SideSell].orders.values():
+            snapshot.orders.append(order)
+        for order in self.depths[Side.SideBuy].orders.values():
+            snapshot.orders.append(order)
+        return snapshot
+
+    def restore(self, snapshot: OrderBookSnapshot):
+        self.log_seq = snapshot.log_seq
+        self.trade_seq = snapshot.trade_seq
+        self.order_id_window = snapshot.order_id_window
+        if self.order_id_window.cap == 0:
+            self.order_id_window = Window(0, ORDER_ID_WINDOW_CAP)
+
+        for order in snapshot.orders:
+            self.depths[order.side].add(order)
+
+    def next_log_seq(self) -> int:
+        self.log_seq = self.log_seq + 1
+        return self.log_seq
+
+    def net_trade_seq(self) -> int:
+        self.trade_seq = self.trade_seq + 1
+        return self.trade_seq

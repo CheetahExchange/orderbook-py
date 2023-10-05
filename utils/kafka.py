@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
-from typing import Dict
+from typing import Dict, List
 
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
@@ -19,9 +19,14 @@ class KafkaProducer(object):
     async def send_and_wait(self, topic: str, payload: bytes):
         await self.producer.send_and_wait(topic=topic, value=payload)
 
+    async def send_batch(self, topic: str, payloads: List[bytes]):
+        bat = self.producer.create_batch()
+        [bat.append(payload) for payload in payloads]
+        await self.producer.send_batch(batch=bat, topic=topic)
+
 
 class KafkaConsumer(object):
-    def __init__(self, brokers: Dict, topic: str, group_id: str):
+    def __init__(self, brokers: Dict[str], topic: str, group_id: str):
         self.partitions = dict()
         self.topic = topic
         self.group_id = group_id
