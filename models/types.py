@@ -10,6 +10,11 @@ class Side(Enum):
     SideBuy = "buy"
     SideSell = "sell"
 
+    def opposite(self):
+        if self == Side.SideBuy:
+            return Side.SideSell
+        return Side.SideBuy
+
 
 def opposite(side: Side) -> Side:
     if side == Side.SideBuy:
