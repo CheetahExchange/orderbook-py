@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
 import sys
 from decimal import Decimal
 from typing import List, Dict

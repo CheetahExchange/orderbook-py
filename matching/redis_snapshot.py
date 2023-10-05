@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
 from matching.engine import Snapshot
 from utils.redis import RedisClient
 

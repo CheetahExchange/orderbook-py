@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
 from typing import Optional
 
 from matching.order_book import OrderBookSnapshot
