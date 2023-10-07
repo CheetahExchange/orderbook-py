@@ -2,8 +2,11 @@
 # encoding: utf-8
 
 from typing import Dict, List
-
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
+
+
+class KafkaException(Exception):
+    pass
 
 
 class KafkaProducer(object):
@@ -21,8 +24,19 @@ class KafkaProducer(object):
 
     async def send_batch(self, topic: str, payloads: List[bytes]):
         bat = self.producer.create_batch()
-        [bat.append(payload) for payload in payloads]
-        await self.producer.send_batch(batch=bat, topic=topic)
+        [bat.append(key=None, value=payload, timestamp=None) for payload in payloads]
+        if bat.record_count() != len(payloads):
+            raise KafkaException("bat.record_count() != len(payloads)")
+
+        partitions = await self.producer.partitions_for(topic)
+        if len(partitions) == 0:
+            raise KafkaException("len(partitions) == 0")
+        partition = partitions[0]
+
+        await self.producer.send_batch(batch=bat, topic=topic, partition=partition)
+
+    async def flush(self):
+        await self.producer.flush()
 
 
 class KafkaConsumer(object):
@@ -38,6 +52,9 @@ class KafkaConsumer(object):
 
     def set_offset(self, offset):
         self.partitions = self.consumer.assignment()
+        if len(self.partitions) == 0:
+            raise KafkaException("len(self.partitions) == 0")
+
         for partition in self.partitions:
             self.consumer.seek(partition=partition, offset=offset)
 

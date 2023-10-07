@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "f5e78be63fb0b971618b25b3c301fc1602c36780645a9e75fd5e66710e497e80"
+            "sha256": "6efea09307e2c968554516f9dc9eb0aad8dd8f130d3b8b5e9f7928aac97456cf"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -70,6 +70,14 @@
             "markers": "python_version >= '3.7'",
             "version": "==23.2"
         },
+        "pytreemap": {
+            "hashes": [
+                "sha256:24f02ba10dba21d79b10c207967ed3dae043f98bc940d7295411e48753c21467",
+                "sha256:f36e25e7681dc081bae182b3802ce86ee77b13d60d5a3ee41ca3d72ce0435d78"
+            ],
+            "index": "pypi",
+            "version": "==0.5.1"
+        },
         "redis": {
             "hashes": [
                 "sha256:0dab495cd5753069d3bc650a0dde8a8f9edde16fc5691b689a566eda58100d0f",
@@ -77,14 +85,6 @@
             ],
             "index": "pypi",
             "version": "==5.0.1"
-        },
-        "sortedcontainers": {
-            "hashes": [
-                "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88",
-                "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0"
-            ],
-            "index": "pypi",
-            "version": "==2.4.0"
         }
     },
     "develop": {}

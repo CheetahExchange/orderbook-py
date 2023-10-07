@@ -17,10 +17,10 @@ class RedisSnapshotStore(object):
 
     async def store(self, snapshot: Snapshot):
         s = json.dumps(snapshot)
-        await self.redis_client.redis.set(name=self.snapshot_key, value=s)
+        await self.redis_client.set(name=self.snapshot_key, value=s)
 
     async def get_latest(self):
-        s = await self.redis_client.redis.get(name=self.snapshot_key)
+        s = await self.redis_client.get(name=self.snapshot_key)
         if s is not None:
             return json.loads(s)
         return None

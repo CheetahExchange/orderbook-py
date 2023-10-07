@@ -19,12 +19,13 @@ class KafkaOrderReader(object):
         await self.order_reader.start()
 
     def set_offset(self, offset):
-        self.set_offset(offset)
+        self.order_reader.set_offset(offset)
 
     async def fetch_order(self) -> (int, Order):
         message = await self.order_reader.fetch_message()
         if message is None:
             return 0, None
 
-        o = json.loads(message.value)
-        return message.offset, o
+        order_dict = json.loads(message.value)
+        order = Order.from_dict(order_dict=order_dict)
+        return message.offset, order

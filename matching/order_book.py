@@ -342,9 +342,9 @@ class OrderBook(object):
             self.depths[order.side].add(order)
 
     def next_log_seq(self) -> int:
-        self.log_seq = self.log_seq + 1
+        self.log_seq += 1
         return self.log_seq
 
     def net_trade_seq(self) -> int:
-        self.trade_seq = self.trade_seq + 1
+        self.trade_seq += 1
         return self.trade_seq

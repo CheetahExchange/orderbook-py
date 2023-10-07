@@ -18,3 +18,4 @@ class KafkaLogStore(object):
     async def store(self, logs: List[Log]):
         payloads = [json.dumps(log).encode("utf8") for log in logs]
         await self.log_writer.send_batch(topic=self.topic, payloads=payloads)
+        await self.log_writer.flush()

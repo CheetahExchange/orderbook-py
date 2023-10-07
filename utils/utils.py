@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+import json
 from decimal import Decimal, ROUND_DOWN
+from enum import Enum
+
+
+class OrderEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Enum):
+            return str(obj.value)
+        elif isinstance(obj, Decimal):
+            return str(obj)
+        return super().default(obj)
 
 
 def truncate_decimal(d, places) -> Decimal:
-    """Truncate Decimal d to the given number of places.
-
-    >>> truncate_decimal(Decimal('1.234567'), 4)
-    Decimal('1.2345')
-    >>> truncate_decimal(Decimal('-0.999'), 1)
-    Decimal('-0.9')
-    """
     return d.quantize(Decimal(10) ** -places, rounding=ROUND_DOWN)
