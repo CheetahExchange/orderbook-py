@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_DOWN
 from enum import Enum
 
 
-class OrderEncoder(json.JSONEncoder):
+class JsonEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Enum):
             return str(obj.value)

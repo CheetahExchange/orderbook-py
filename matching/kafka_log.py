@@ -6,6 +6,7 @@ from typing import Dict, List
 
 from matching.log import Log
 from utils.kafka import KafkaProducer
+from utils.utils import JsonEncoder
 
 TOPIC_BOOK_MESSAGE_PREFIX = "matching_message_"
 
@@ -16,6 +17,6 @@ class KafkaLogStore(object):
         self.log_writer = KafkaProducer(brokers=brokers)
 
     async def store(self, logs: List[Log]):
-        payloads = [json.dumps(log).encode("utf8") for log in logs]
+        payloads = [json.dumps(log, cls=JsonEncoder).encode("utf8") for log in logs]
         await self.log_writer.send_batch(topic=self.topic, payloads=payloads)
         await self.log_writer.flush()

@@ -6,7 +6,7 @@ from unittest import TestCase
 
 from models.models import Order
 from models.types import OrderType, Side, TimeInForceType, OrderStatus
-from utils.utils import truncate_decimal, OrderEncoder
+from utils.utils import truncate_decimal, JsonEncoder
 
 
 class UtilsTest(TestCase):
@@ -26,5 +26,5 @@ class UtilsTest(TestCase):
                       _type=OrderType.OrderTypeLimit,
                       side=Side.SideBuy, time_in_force=TimeInForceType.GoodTillCanceled,
                       status=OrderStatus.OrderStatusNew)
-        message = json.dumps(vars(order), cls=OrderEncoder)
+        message = json.dumps(vars(order), cls=JsonEncoder)
         order_dict = json.loads(message)
