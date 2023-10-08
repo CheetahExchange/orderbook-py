@@ -9,17 +9,24 @@ from matching.kafka_order import KafkaOrderReader
 from matching.redis_snapshot import RedisSnapshotStore
 from models.models import Product
 
+from config import *
+
 
 async def main():
-    product = Product(_id="BTC-USD", base_currency="BTC", quote_currency="USD", base_scale=6, quote_scale=2)
-    snapshot_store = RedisSnapshotStore(product_id=product.id, ip="192.168.1.123", port=6379)
-    order_reader = KafkaOrderReader(product_id=product.id, brokers=["192.168.1.123:9092"],
-                                    group_id="order-reader-{}-group".format(product.id))
-    log_store = KafkaLogStore(product_id=product.id, brokers=["192.168.1.123:9092"])
+    product = Product(_id=product_id, base_currency=base_currency, quote_currency=quote_currency, base_scale=base_scale,
+                      quote_scale=quote_scale)
+
+    snapshot_store = RedisSnapshotStore(product_id=product_id, ip=redis_ip, port=redis_port)
+
+    log_store = KafkaLogStore(product_id=product.id, brokers=kafka_brokers)
+
+    order_reader = KafkaOrderReader(product_id=product_id, brokers=kafka_brokers, group_id=group_id)
     await order_reader.start()
 
+    # engine
     engine = Engine(product=product, order_reader=order_reader, log_store=log_store,
                     snapshot_store=snapshot_store)
+
     await engine.initialize_snapshot()
     await engine.start()
 

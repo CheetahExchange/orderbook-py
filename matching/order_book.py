@@ -2,6 +2,7 @@
 # encoding: utf-8
 import logging
 import sys
+import copy
 from decimal import Decimal
 from typing import List, Dict
 
@@ -164,8 +165,8 @@ class OrderBook(object):
                 taker_order.price = Decimal(0)
 
         maker_depth = self.depths[taker_order.side.opposite()]
-        for e in iter(maker_depth.queue):
-            maker_order = maker_depth.orders[maker_depth.queue.get(e)]
+        for v in maker_depth.queue.values():
+            maker_order = maker_depth.orders[v]
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -221,9 +222,9 @@ class OrderBook(object):
             else:
                 taker_order.price = Decimal(0)
 
-        maker_depth = self.depths[taker_order.side.opposite()]
-        for e in iter(maker_depth.queue):
-            maker_order = maker_depth.orders[maker_depth.queue.get(e)]
+        maker_depth = copy.deepcopy(self.depths[taker_order.side.opposite()])
+        for v in maker_depth.queue.values():
+            maker_order = maker_depth.orders[v]
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -259,6 +260,7 @@ class OrderBook(object):
 
             try:
                 self.depths[taker_order.side.opposite()].decr_size(maker_order.order_id, size)
+                maker_order.size -= size
             except DepthException as ex:
                 logging.fatal("{}".format(ex))
                 sys.exit()
@@ -277,7 +279,7 @@ class OrderBook(object):
                 logs.append(done_log)
 
         if taker_order.type == OrderType.OrderTypeLimit and taker_order.size > 0:
-            self.depths[taker_order.side.opposite()].add(taker_order)
+            self.depths[taker_order.side].add(taker_order)
             open_log = OpenLog(self.next_log_seq(), self.product.id, taker_order)
             logging.info("OpenLog: {}".format(OpenLog.to_json_str(open_log)))
             logs.append(open_log)
