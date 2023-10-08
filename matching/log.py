@@ -3,7 +3,6 @@
 import json
 from decimal import Decimal
 from enum import Enum
-from matching.order_book import BookOrder
 import time
 
 from models.types import DoneReason, Side, TimeInForceType
@@ -32,7 +31,7 @@ class Log(object):
 
 
 class OpenLog(Log):
-    def __init__(self, log_seq: int, product_id: str, taker_order: BookOrder):
+    def __init__(self, log_seq: int, product_id: str, taker_order):
         super().__init__(LogType.LogTypeOpen, log_seq, product_id, time.time_ns())
         self.order_id: int = taker_order.order_id
         self.user_id: int = taker_order.user_id
@@ -50,7 +49,7 @@ class OpenLog(Log):
 
 
 class DoneLog(Log):
-    def __init__(self, log_seq: int, product_id: str, order: BookOrder, remaining_size: Decimal, reason: DoneReason):
+    def __init__(self, log_seq: int, product_id: str, order, remaining_size: Decimal, reason: DoneReason):
         super().__init__(LogType.LogTypeDone, log_seq, product_id, time.time_ns())
         self.order_id: int = order.order_id
         self.user_id: int = order.user_id
@@ -69,7 +68,7 @@ class DoneLog(Log):
 
 
 class MatchLog(Log):
-    def __init__(self, log_seq: int, product_id: str, trade_seq: int, taker_order: BookOrder, maker_order: BookOrder,
+    def __init__(self, log_seq: int, product_id: str, trade_seq: int, taker_order, maker_order,
                  price: Decimal, size: Decimal):
         super().__init__(LogType.LogTypeMatch, log_seq, product_id, time.time_ns())
         self.trade_seq: int = trade_seq

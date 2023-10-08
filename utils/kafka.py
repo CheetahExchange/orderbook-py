@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-from typing import Dict, List
+from typing import List
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
 
@@ -9,7 +9,7 @@ class KafkaException(Exception):
 
 
 class KafkaProducer(object):
-    def __init__(self, brokers: Dict):
+    def __init__(self, brokers: List[str]):
         self.producer = AIOKafkaProducer(bootstrap_servers=','.join(brokers))
 
     async def start(self):
@@ -39,7 +39,7 @@ class KafkaProducer(object):
 
 
 class KafkaConsumer(object):
-    def __init__(self, brokers: Dict[str], topic: str, group_id: str):
+    def __init__(self, brokers: List[str], topic: str, group_id: str):
         self.partitions = dict()
         self.topic = topic
         self.group_id = group_id
@@ -58,5 +58,5 @@ class KafkaConsumer(object):
             self.consumer.seek(partition=partition, offset=offset)
 
     async def fetch_message(self):
-        kafka_record = await self.consumer.getone(self.partitions)
+        kafka_record = await self.consumer.getone()
         return kafka_record

@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # encoding: utf-8
+import asyncio
 import json
+import logging
+import sys
+from asyncio import Queue, wait, FIRST_COMPLETED, wait_for, gather
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
-from matching.order_book import OrderBookSnapshot, BookOrder
-from models.models import OrderException
-from models.types import OrderType, Side, TimeInForceType
+from matching.kafka_log import KafkaLogStore
+from matching.kafka_order import KafkaOrderReader
+from matching.log import Log
+from matching.order_book import OrderBookSnapshot, BookOrder, OrderBook
+from models.models import OrderException, Product, Order
+from models.types import OrderType, Side, TimeInForceType, OrderStatus
 from utils.utils import JsonEncoder
 from utils.window import Window
 
@@ -90,3 +97,174 @@ class Snapshot(object):
                                                 trade_seq=trade_seq, log_seq=log_seq,
                                                 order_id_window=order_id_window)
         return Snapshot(order_book_snapshot=order_book_snapshot, order_offset=order_offset)
+
+
+class OffsetOrder(object):
+    def __init__(self, offset: int, order: Order):
+        self.offset: int = offset
+        self.order: Order = order
+
+
+class Engine(object):
+    def __init__(self, product: Product, order_reader: KafkaOrderReader, log_store: KafkaLogStore,
+                 snapshot_store):
+        self.product_id: str = product.id
+        self.order_book: OrderBook = OrderBook(product, 0, 0)
+        self.order_reader: KafkaOrderReader = order_reader
+        self.order_offset: int = 0
+        self.log_store: KafkaLogStore = log_store
+        self.snapshot_store = snapshot_store
+        self.log_chan: Queue = Queue(maxsize=10000)
+        self.order_chan: Queue = Queue(maxsize=10000)
+        self.snapshot_req_chan: Queue = Queue(maxsize=32)
+        self.snapshot_approve_req_chan: Queue = Queue(maxsize=32)
+        self.snapshot_chan: Queue = Queue(maxsize=32)
+
+    def restore(self, snapshot: Snapshot):
+        self.order_offset = snapshot.order_offset
+        self.order_book.restore(snapshot=snapshot.order_book_snapshot)
+
+    async def initialize_snapshot(self):
+        snapshot = await self.snapshot_store.get_latest()
+        if snapshot is not None:
+            self.restore(snapshot=snapshot)
+
+    async def start(self):
+        task1 = asyncio.create_task(self.run_fetcher())
+        task2 = asyncio.create_task(self.run_applier())
+        task3 = asyncio.create_task(self.run_committer())
+        task4 = asyncio.create_task(self.run_snapshots())
+        await gather(task1, task2, task3, task4)
+
+    async def run_fetcher(self):
+        offset = self.order_offset
+        if offset > 0:
+            offset += 1
+
+        try:
+            self.order_reader.set_offset(offset)
+        except Exception as ex:
+            logging.fatal("set order reader offset error: {}".format(ex))
+            sys.exit()
+
+        while True:
+            try:
+                offset, order = await self.order_reader.fetch_order()
+                logging.info("fetch_order: {}".format(Order.to_json_str(order)))
+                await self.order_chan.put(OffsetOrder(offset=offset, order=order))
+            except Exception as ex:
+                logging.error("{}".format(str(ex)))
+
+    async def run_applier(self):
+        order_offset: int = 0
+
+        while True:
+            task1 = self.order_chan.get()
+            task2 = self.snapshot_req_chan.get()
+            done, pending = await wait({task1, task2}, return_when=FIRST_COMPLETED)
+            for t in done:
+                result = t.result()
+                if isinstance(result, OffsetOrder):
+                    offset_order: OffsetOrder = result
+                    logs: List[Log] = list()
+                    if offset_order.order.status == OrderStatus.OrderStatusCancelling:
+                        logs = self.order_book.cancel_order(offset_order.order)
+                    else:
+                        if offset_order.order.time_in_force == TimeInForceType.ImmediateOrCancel:
+                            logs = self.order_book.apply_order(offset_order.order)
+                            ioc_logs = self.order_book.cancel_order(offset_order.order)
+                            if len(ioc_logs) != 0:
+                                logs.extend(ioc_logs)
+                        elif offset_order.order.time_in_force == TimeInForceType.GoodTillCrossing:
+                            if self.order_book.is_order_will_not_match(offset_order.order):
+                                logs = self.order_book.apply_order(offset_order.order)
+                            else:
+                                logs = self.order_book.nullify_order(offset_order.order)
+                        elif offset_order.order.time_in_force == TimeInForceType.FillOrKill:
+                            if self.order_book.is_order_will_full_match(offset_order.order):
+                                logs = self.order_book.apply_order(offset_order.order)
+                            else:
+                                logs = self.order_book.nullify_order(offset_order.order)
+                        elif offset_order.order.time_in_force == TimeInForceType.GoodTillCanceled:
+                            logs = self.order_book.apply_order(offset_order.order)
+
+                    for log in logs:
+                        await self.log_chan.put(log)
+
+                    order_offset = offset_order.offset
+
+                elif isinstance(result, Snapshot):
+                    snapshot: Snapshot = result
+                    delta = order_offset - snapshot.order_offset
+                    if delta <= 1000:
+                        break
+
+                    logging.info(
+                        "should take snapshot: {} {}-[{}]-{}->".format(self.product_id, snapshot.order_offset, delta,
+                                                                       order_offset))
+
+                    snapshot.order_book_snapshot = self.order_book.snapshot()
+                    snapshot.order_offset = order_offset
+                    await self.snapshot_approve_req_chan.put(snapshot)
+
+                break
+
+    async def run_committer(self):
+        seq: int = self.order_book.log_seq
+        pending_snapshot: Optional[Snapshot] = None
+        logs: List[Log] = list()
+
+        while True:
+            task1 = self.log_chan.get()
+            task2 = self.snapshot_approve_req_chan.get()
+            done, pending = await wait({task1, task2}, return_when=FIRST_COMPLETED)
+            for t in done:
+                result = t.result()
+                if isinstance(result, Log):
+                    log: Log = result
+                    if log.get_seq() <= seq:
+                        logging.info("discard log seq={}".format(seq))
+                        break
+
+                    if self.log_chan.qsize() > 0 and len(logs) < 100:
+                        break
+                    try:
+                        await self.log_store.store(logs)
+                    except Exception as ex:
+                        logging.fatal("{}".format(ex))
+                        sys.exit()
+
+                    if pending_snapshot is not None and seq >= pending_snapshot.order_book_snapshot.log_seq:
+                        await self.snapshot_chan.put(pending_snapshot)
+                        pending_snapshot = None
+
+                elif isinstance(result, Snapshot):
+                    snapshot: Snapshot = result
+                    if seq >= snapshot.order_book_snapshot.log_seq:
+                        await self.snapshot_chan.put(snapshot)
+                        pending_snapshot = None
+                        break
+
+                    if pending_snapshot is not None:
+                        logging.info("discard snapshot request (seq={}), new one (seq={}) received".format(
+                            pending_snapshot.order_book_snapshot.log_seq, snapshot.order_book_snapshot.log_seq))
+                    pending_snapshot = snapshot
+
+                break
+
+    async def run_snapshots(self):
+        order_offset = self.order_offset
+
+        while True:
+            task1 = self.snapshot_chan.get()
+            try:
+                snapshot: Snapshot = await wait_for(task1, timeout=30)
+                await self.snapshot_store.store(snapshot=snapshot)
+
+                logging.info("new snapshot stored: product={} OrderOffset={} LogSeq={}".format(
+                    self.product_id, snapshot.order_offset, snapshot.order_book_snapshot.log_seq))
+
+                order_offset = snapshot.order_offset
+
+            except asyncio.TimeoutError:
+                await self.snapshot_req_chan.put(Snapshot(order_book_snapshot=None, order_offset=order_offset))

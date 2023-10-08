@@ -12,7 +12,7 @@ from utils.utils import truncate_decimal
 from utils.window import Window, WindowException
 from pytreemap import TreeMap
 
-ORDER_ID_WINDOW_CAP = 10000
+ORDER_ID_WINDOW_CAP: int = 10000
 
 
 class DepthException(Exception):
@@ -165,7 +165,7 @@ class OrderBook(object):
 
         maker_depth = self.depths[taker_order.side.opposite()]
         for e in iter(maker_depth.queue):
-            maker_order = maker_depth.orders[e.get_value()]
+            maker_order = maker_depth.orders[maker_depth.queue.get(e)]
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -210,7 +210,7 @@ class OrderBook(object):
         try:
             self.order_id_window.put(order.id)
         except WindowException as ex:
-            logging.error(str(ex))
+            logging.error("{}".format(str(ex)))
             return logs
 
         taker_order = BookOrder.from_order(order)
@@ -223,7 +223,7 @@ class OrderBook(object):
 
         maker_depth = self.depths[taker_order.side.opposite()]
         for e in iter(maker_depth.queue):
-            maker_order = maker_depth.orders[e.get_value()]
+            maker_order = maker_depth.orders[maker_depth.queue.get(e)]
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -260,22 +260,26 @@ class OrderBook(object):
             try:
                 self.depths[taker_order.side.opposite()].decr_size(maker_order.order_id, size)
             except DepthException as ex:
-                logging.fatal(str(ex))
+                logging.fatal("{}".format(ex))
+                sys.exit()
 
             # matched, write a log
             match_log = MatchLog(self.next_log_seq(), self.product.id, self.net_trade_seq(), taker_order, maker_order,
                                  price, size)
+            logging.info("MatchLog: {}".format(MatchLog.to_json_str(match_log)))
             logs.append(match_log)
 
             # maker is filled
             if maker_order.size.is_zero():
                 done_log = DoneLog(self.next_log_seq(), self.product.id, maker_order, maker_order.size,
                                    DoneReason.DoneReasonFilled)
+                logging.info("DoneLog: {}".format(DoneLog.to_json_str(done_log)))
                 logs.append(done_log)
 
         if taker_order.type == OrderType.OrderTypeLimit and taker_order.size > 0:
             self.depths[taker_order.side.opposite()].add(taker_order)
             open_log = OpenLog(self.next_log_seq(), self.product.id, taker_order)
+            logging.info("OpenLog: {}".format(OpenLog.to_json_str(open_log)))
             logs.append(open_log)
         else:
             remaining_size = taker_order.size
@@ -289,6 +293,7 @@ class OrderBook(object):
                     reason = DoneReason.DoneReasonCancelled
 
             done_log = DoneLog(self.next_log_seq(), self.product.id, taker_order, remaining_size, reason)
+            logging.info("DoneLog: {}".format(DoneLog.to_json_str(done_log)))
             logs.append(done_log)
 
         return logs
@@ -309,10 +314,12 @@ class OrderBook(object):
         try:
             self.depths[order.side].decr_size(order.id, book_order.size)
         except DepthException as ex:
-            logging.fatal(str(ex))
+            logging.fatal("{}".format(ex))
+            sys.exit()
 
         done_log = DoneLog(self.next_log_seq(), self.product.id, book_order, remaining_size,
                            DoneReason.DoneReasonCancelled)
+        logging.info("DoneLog: {}".format(DoneLog.to_json_str(done_log)))
         logs.append(done_log)
         return logs
 
@@ -327,6 +334,7 @@ class OrderBook(object):
         book_order = BookOrder.from_order(order)
         done_log = DoneLog(self.next_log_seq(), self.product.id, book_order, order.size,
                            DoneReason.DoneReasonCancelled)
+        logging.info("DoneLog: {}".format(DoneLog.to_json_str(done_log)))
         logs.append(done_log)
         return logs
 
