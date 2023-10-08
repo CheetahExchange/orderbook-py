@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
 import logging
 import sys
 from decimal import Decimal
@@ -21,15 +20,23 @@ class DepthException(Exception):
 
 
 class BookOrder(object):
-    def __init__(self, order: Order):
-        self.order_id: int = order.id
-        self.user_id: int = order.user_id
-        self.price: Decimal = order.price
-        self.size: Decimal = order.size
-        self.funds: Decimal = order.funds
-        self.side: Side = order.side
-        self.type: OrderType = order.type
-        self.time_in_force: TimeInForceType = order.time_in_force
+    def __init__(self, order_id: int, user_id: int, price: Decimal,
+                 size: Decimal, funds: Decimal, side: Side, _type: OrderType,
+                 time_in_force: TimeInForceType):
+        self.order_id: int = order_id
+        self.user_id: int = user_id
+        self.price: Decimal = price
+        self.size: Decimal = size
+        self.funds: Decimal = funds
+        self.side: Side = side
+        self.type: OrderType = _type
+        self.time_in_force: TimeInForceType = time_in_force
+
+    @staticmethod
+    def from_order(order: Order):
+        return BookOrder(order_id=order.id, user_id=order.user_id, price=order.price,
+                         size=order.size, funds=order.funds, side=order.side,
+                         _type=order.type, time_in_force=order.time_in_force)
 
 
 class OrderBookSnapshot(object):
@@ -117,7 +124,7 @@ class OrderBook(object):
         self.depths[Side.SideSell] = asks
 
     def is_order_will_not_match(self, order: Order) -> bool:
-        taker_order = BookOrder(order)
+        taker_order = BookOrder.from_order(order)
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
                 taker_order.price = Decimal(sys.float_info.max)
@@ -148,7 +155,7 @@ class OrderBook(object):
         return False
 
     def is_order_will_full_match(self, order: Order) -> bool:
-        taker_order = BookOrder(order)
+        taker_order = BookOrder.from_order(order)
 
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
@@ -206,7 +213,7 @@ class OrderBook(object):
             logging.error(str(ex))
             return logs
 
-        taker_order = BookOrder(order)
+        taker_order = BookOrder.from_order(order)
 
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
@@ -317,7 +324,7 @@ class OrderBook(object):
         except WindowException as ex:
             pass
 
-        book_order = BookOrder(order)
+        book_order = BookOrder.from_order(order)
         done_log = DoneLog(self.next_log_seq(), self.product.id, book_order, order.size,
                            DoneReason.DoneReasonCancelled)
         logs.append(done_log)

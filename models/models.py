@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
+import json
 from decimal import Decimal
 
 from models.types import OrderType, Side, TimeInForceType, OrderStatus
+from utils.utils import JsonEncoder
 
 
 class OrderException(Exception):
@@ -37,7 +38,13 @@ class Order(object):
         self.status: OrderStatus = status
 
     @staticmethod
-    def from_dict(order_dict):
+    def to_json_str(order):
+        return json.dumps(vars(order), cls=JsonEncoder)
+
+    @staticmethod
+    def from_json_str(json_str: str):
+        order_dict = json.loads(json_str)
+
         order_id = int(order_dict.get("id"))
         order_created_at = int(order_dict.get("created_at"))
         order_product_id = order_dict.get("product_id")

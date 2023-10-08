@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
-import json
 from typing import Dict
 
 from models.models import Order
@@ -26,6 +24,5 @@ class KafkaOrderReader(object):
         if message is None:
             return 0, None
 
-        order_dict = json.loads(message.value)
-        order = Order.from_dict(order_dict=order_dict)
+        order = Order.from_json_str(json_str=message.value)
         return message.offset, order

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
+from typing import List
 
 from utils.bitmap import BitMap
 
@@ -28,3 +29,12 @@ class Window(object):
             raise WindowException("existed val {}".format(val))
         else:
             self.bit_map.set(val % self.cap, True)
+
+    @staticmethod
+    def from_raw(_min: int, _max: int, _cap: int, bitmap_data: List[int]):
+        window = Window(_min, _max)
+        window.min = _min
+        window.max = _max
+        window.cap = _cap
+        window.bit_map = BitMap.from_data(bitmap_data)
+        return window

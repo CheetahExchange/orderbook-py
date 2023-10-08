@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
 from typing import Dict, List
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 

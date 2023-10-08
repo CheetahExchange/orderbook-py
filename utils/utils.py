@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
 import json
 from decimal import Decimal, ROUND_DOWN
 from enum import Enum

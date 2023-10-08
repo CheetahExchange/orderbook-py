@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 # encoding: utf-8
-import json
 from decimal import Decimal
 from unittest import TestCase
 
 from models.models import Order
 from models.types import OrderType, Side, TimeInForceType, OrderStatus
-from utils.utils import truncate_decimal, JsonEncoder
+from utils.utils import truncate_decimal
 
 
 class UtilsTest(TestCase):
@@ -26,5 +25,7 @@ class UtilsTest(TestCase):
                       _type=OrderType.OrderTypeLimit,
                       side=Side.SideBuy, time_in_force=TimeInForceType.GoodTillCanceled,
                       status=OrderStatus.OrderStatusNew)
-        message = json.dumps(vars(order), cls=JsonEncoder)
-        order_dict = json.loads(message)
+        message = Order.to_json_str(order=order)
+        order_dict = Order.from_json_str(message)
+        print(message)
+        print(order_dict)

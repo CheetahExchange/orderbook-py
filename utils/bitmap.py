@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
+from typing import List
 
 TA = [1, 2, 4, 8, 16, 32, 64, 128]
 TB = [254, 253, 251, 247, 239, 223, 191, 127]
@@ -19,3 +20,9 @@ class BitMap(object):
             self.data[idx] = self.data[idx] | TA[bit]
         else:
             self.data[idx] = self.data[idx] & TB[bit]
+
+    @staticmethod
+    def from_data(data: List[int]):
+        bitmap = BitMap(0)
+        bitmap.data = data
+        return bitmap

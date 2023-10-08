@@ -1,12 +1,9 @@
 #!/usr/bin/env python
 # encoding: utf-8
+from typing import Optional
 
 from matching.engine import Snapshot
 from utils.redis import RedisClient
-
-import json
-
-from utils.utils import JsonEncoder
 
 TOPIC_SNAPSHOT_PREFIX: str = "matching_snapshot_"
 
@@ -18,12 +15,11 @@ class RedisSnapshotStore(object):
         self.redis_client = RedisClient(ip=ip, port=port)
 
     async def store(self, snapshot: Snapshot):
-        s = json.dumps(snapshot, cls=JsonEncoder)
+        s = Snapshot.to_json_str(snapshot=snapshot)
         await self.redis_client.set(name=self.snapshot_key, value=s)
 
-    async def get_latest(self):
+    async def get_latest(self) -> Optional[Snapshot]:
         s = await self.redis_client.get(name=self.snapshot_key)
         if s is not None:
-            # TODO
-            return json.loads(s)
+            return Snapshot.from_json_str(s)
         return None

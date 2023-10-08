@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # encoding: utf-8
-
+import json
 from decimal import Decimal
 from enum import Enum
 from matching.order_book import BookOrder
 import time
 
 from models.types import DoneReason, Side, TimeInForceType
+from utils.utils import JsonEncoder
 
 
 class LogType(Enum):
@@ -16,11 +17,6 @@ class LogType(Enum):
 
 
 class Log(object):
-    def get_seq(self) -> int:
-        return -1
-
-
-class Base(Log):
     def __init__(self, _type: LogType, seq: int, product_id: str, _time: int):
         self.type: LogType = _type
         self.sequence: int = seq
@@ -30,8 +26,12 @@ class Base(Log):
     def get_seq(self) -> int:
         return self.sequence
 
+    @staticmethod
+    def to_json_str(log):
+        return json.dumps(vars(log), cls=JsonEncoder)
 
-class OpenLog(Base):
+
+class OpenLog(Log):
     def __init__(self, log_seq: int, product_id: str, taker_order: BookOrder):
         super().__init__(LogType.LogTypeOpen, log_seq, product_id, time.time_ns())
         self.order_id: int = taker_order.order_id
@@ -44,8 +44,12 @@ class OpenLog(Base):
     def get_seq(self) -> int:
         return self.sequence
 
+    @staticmethod
+    def to_json_str(log):
+        return json.dumps(vars(log), cls=JsonEncoder)
 
-class DoneLog(Base):
+
+class DoneLog(Log):
     def __init__(self, log_seq: int, product_id: str, order: BookOrder, remaining_size: Decimal, reason: DoneReason):
         super().__init__(LogType.LogTypeDone, log_seq, product_id, time.time_ns())
         self.order_id: int = order.order_id
@@ -59,8 +63,12 @@ class DoneLog(Base):
     def get_seq(self) -> int:
         return self.sequence
 
+    @staticmethod
+    def to_json_str(log):
+        return json.dumps(vars(log), cls=JsonEncoder)
 
-class MatchLog(Base):
+
+class MatchLog(Log):
     def __init__(self, log_seq: int, product_id: str, trade_seq: int, taker_order: BookOrder, maker_order: BookOrder,
                  price: Decimal, size: Decimal):
         super().__init__(LogType.LogTypeMatch, log_seq, product_id, time.time_ns())
@@ -77,3 +85,7 @@ class MatchLog(Base):
 
     def get_seq(self) -> int:
         return self.sequence
+
+    @staticmethod
+    def to_json_str(log):
+        return json.dumps(vars(log), cls=JsonEncoder)
