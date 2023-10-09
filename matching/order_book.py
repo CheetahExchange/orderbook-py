@@ -85,7 +85,10 @@ def price_order_id_key_desc_comparator(l: PriceOrderIdKey, r: PriceOrderIdKey):
 
 class Depth(object):
     def __init__(self):
+        # all orders
         self.orders: Dict[int, BookOrder] = dict()
+        # price first, time first order queue for order match
+        # priceOrderIdKey -> orderId
         self.queue: TreeMap = TreeMap()
 
     def add(self, order: BookOrder):
@@ -126,6 +129,9 @@ class OrderBook(object):
 
     def is_order_will_not_match(self, order: Order) -> bool:
         taker_order = BookOrder.from_order(order)
+
+        # If it's a Market-Buy order, set price to infinite high, and if it's market-sell,
+        # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
                 taker_order.price = Decimal(sys.float_info.max)
@@ -158,6 +164,8 @@ class OrderBook(object):
     def is_order_will_full_match(self, order: Order) -> bool:
         taker_order = BookOrder.from_order(order)
 
+        # If it's a Market-Buy order, set price to infinite high, and if it's market-sell,
+        # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
                 taker_order.price = Decimal(sys.float_info.max)
@@ -208,6 +216,7 @@ class OrderBook(object):
     def apply_order(self, order: Order) -> list:
         logs = list()
 
+        # prevent orders from being submitted repeatedly to the matching engine
         try:
             self.order_id_window.put(order.id)
         except WindowException as ex:
@@ -216,6 +225,8 @@ class OrderBook(object):
 
         taker_order = BookOrder.from_order(order)
 
+        # If it's a Market-Buy order, set price to infinite high, and if it's market-sell,
+        # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
                 taker_order.price = Decimal(sys.float_info.max)
@@ -279,7 +290,9 @@ class OrderBook(object):
                 logs.append(done_log)
 
         if taker_order.type == OrderType.OrderTypeLimit and taker_order.size > 0:
+            # If taker has an uncompleted size, put taker in orderBook
             self.depths[taker_order.side].add(taker_order)
+
             open_log = OpenLog(self.next_log_seq(), self.product.id, taker_order)
             logging.info("OpenLog: {}".format(OpenLog.to_json_str(open_log)))
             logs.append(open_log)

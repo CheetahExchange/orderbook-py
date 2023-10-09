@@ -170,22 +170,27 @@ class Engine(object):
                     if offset_order.order.status == OrderStatus.OrderStatusCancelling:
                         logs = self.order_book.cancel_order(offset_order.order)
                     else:
+                        # IOC
                         if offset_order.order.time_in_force == TimeInForceType.ImmediateOrCancel:
                             logs = self.order_book.apply_order(offset_order.order)
+                            # cancel the rest size
                             ioc_logs = self.order_book.cancel_order(offset_order.order)
                             if len(ioc_logs) != 0:
                                 logs.extend(ioc_logs)
                         elif offset_order.order.time_in_force == TimeInForceType.GoodTillCrossing:
+                            # GTX
                             if self.order_book.is_order_will_not_match(offset_order.order):
                                 logs = self.order_book.apply_order(offset_order.order)
                             else:
                                 logs = self.order_book.nullify_order(offset_order.order)
                         elif offset_order.order.time_in_force == TimeInForceType.FillOrKill:
+                            # FOK
                             if self.order_book.is_order_will_full_match(offset_order.order):
                                 logs = self.order_book.apply_order(offset_order.order)
                             else:
                                 logs = self.order_book.nullify_order(offset_order.order)
                         elif offset_order.order.time_in_force == TimeInForceType.GoodTillCanceled:
+                            # GTC
                             logs = self.order_book.apply_order(offset_order.order)
 
                     for log in logs:
@@ -222,18 +227,24 @@ class Engine(object):
                 result = t.result()
                 if isinstance(result, Log):
                     log: Log = result
+                    # discard duplicate log
                     if log.get_seq() <= seq:
                         logging.info("discard log seq={}".format(seq))
                         break
 
+                    # chan is not empty and buffer is not full, continue read.
                     if self.log_chan.qsize() > 0 and len(logs) < 100:
                         break
+
                     try:
+                        # store log, clean buffer
                         await self.log_store.store(logs)
+                        logs.clear()
                     except Exception as ex:
                         logging.fatal("{}".format(ex))
                         sys.exit()
 
+                    # approve pending snapshot
                     if pending_snapshot is not None and seq >= pending_snapshot.order_book_snapshot.log_seq:
                         await self.snapshot_chan.put(pending_snapshot)
                         pending_snapshot = None
@@ -259,12 +270,15 @@ class Engine(object):
             task1 = self.snapshot_chan.get()
             try:
                 snapshot: Snapshot = await wait_for(task1, timeout=30)
+                # store snapshot
                 await self.snapshot_store.store(snapshot=snapshot)
 
                 logging.info("new snapshot stored: product={} OrderOffset={} LogSeq={}".format(
                     self.product_id, snapshot.order_offset, snapshot.order_book_snapshot.log_seq))
 
+                # update offset for next snapshot request
                 order_offset = snapshot.order_offset
 
             except asyncio.TimeoutError:
+                # make a new snapshot request
                 await self.snapshot_req_chan.put(Snapshot(order_book_snapshot=None, order_offset=order_offset))
