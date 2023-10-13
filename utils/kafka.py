@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
+from random import random
 from typing import List
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
@@ -30,7 +31,9 @@ class KafkaProducer(object):
         partitions = await self.producer.partitions_for(topic)
         if len(partitions) == 0:
             raise KafkaException("len(partitions) == 0")
-        partition = partitions[0]
+
+        # partition = partitions[0]
+        partition = random.choice(partitions)
 
         await self.producer.send_batch(batch=bat, topic=topic, partition=partition)
 
