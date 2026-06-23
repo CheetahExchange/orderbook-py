@@ -4,9 +4,12 @@ import logging
 import sys
 from decimal import Decimal
 from typing import List, Dict
+import copy
+
+_MAX_PRICE = Decimal(sys.float_info.max)
 
 from matching.log import MatchLog, DoneLog, OpenLog
-from models.models import Product, Order
+from models.models import Product, Order, _safe_decimal
 from models.types import Side, OrderType, TimeInForceType, DoneReason
 from utils.utils import truncate_decimal, normalize_price, normalize_size
 from utils.time_window import TimeWindow, TimeWindowException, TimeWindowSnapshot, current_time_since_snowflake_epoch
@@ -78,12 +81,17 @@ class BookOrder(object):
         else:
             raise DepthException("invalid TimeInForceType")
 
+        order_id = int(d.get("order_id"))
+        user_id = int(d.get("user_id"))
+        if order_id < 0 or user_id < 0:
+            raise DepthException("invalid order_id or user_id: must be non-negative")
+
         return BookOrder(
-            order_id=int(d.get("order_id")),
-            user_id=int(d.get("user_id")),
-            price=Decimal(d.get("price")),
-            size=Decimal(d.get("size")),
-            funds=Decimal(d.get("funds")),
+            order_id=order_id,
+            user_id=user_id,
+            price=_safe_decimal(d.get("price"), "price"),
+            size=_safe_decimal(d.get("size"), "size"),
+            funds=_safe_decimal(d.get("funds"), "funds"),
             side=order_side,
             _type=order_type,
             time_in_force=order_time_in_force,
@@ -91,12 +99,14 @@ class BookOrder(object):
 
 
 class OrderBookSnapshot(object):
-    def __init__(self, product_id: str, orders: List, trade_seq: int, log_seq: int, time_window: TimeWindowSnapshot):
+    def __init__(self, product_id: str, orders: List, trade_seq: int, log_seq: int,
+                 time_window: TimeWindowSnapshot, last_trade_price: Decimal = Decimal(0)):
         self.product_id: str = product_id
         self.orders: List[BookOrder] = orders
         self.trade_seq: int = trade_seq
         self.log_seq: int = log_seq
         self.time_window: TimeWindowSnapshot = time_window
+        self.last_trade_price: Decimal = last_trade_price
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +115,7 @@ class OrderBookSnapshot(object):
             "trade_seq": self.trade_seq,
             "log_seq": self.log_seq,
             "time_window": self.time_window.to_dict(),
+            "last_trade_price": str(self.last_trade_price),
         }
 
     @staticmethod
@@ -121,6 +132,7 @@ class OrderBookSnapshot(object):
             trade_seq=int(d.get("trade_seq", 0)),
             log_seq=int(d.get("log_seq", 0)),
             time_window=time_window,
+            last_trade_price=Decimal(d.get("last_trade_price", "0")),
         )
 
 
@@ -187,7 +199,6 @@ class Depth(object):
             raise DepthException("order {} Size {} less than {}".format(order_id, order.size, size))
 
         order.size -= size
-        self.orders[order_id] = order
         if order.size.is_zero():
             del self.orders[order_id]
             self.queue.remove(PriceOrderIdKey(order.price, order.order_id))
@@ -206,6 +217,7 @@ class OrderBook(object):
         self.trade_seq = trade_seq
         self.log_seq = log_seq
         self.time_window = TimeWindow()
+        self.last_trade_price = Decimal(0)
 
         self.depths[Side.SideBuy] = bids
         self.depths[Side.SideSell] = asks
@@ -217,7 +229,7 @@ class OrderBook(object):
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal('Infinity')
+                taker_order.price = _MAX_PRICE
             else:
                 taker_order.price = Decimal(0)
 
@@ -250,7 +262,7 @@ class OrderBook(object):
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal('Infinity')
+                taker_order.price = _MAX_PRICE
             else:
                 taker_order.price = Decimal(0)
 
@@ -328,7 +340,7 @@ class OrderBook(object):
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal('Infinity')
+                taker_order.price = _MAX_PRICE
             else:
                 taker_order.price = Decimal(0)
 
@@ -390,6 +402,8 @@ class OrderBook(object):
                                  price, size)
             logging.info("MatchLog: {}".format(MatchLog.to_json_str(match_log)))
             logs.append(match_log)
+
+            self.last_trade_price = maker_order.price
 
             # maker is filled
             if maker_order.size.is_zero():
@@ -476,16 +490,18 @@ class OrderBook(object):
         return logs
 
     def snapshot(self) -> OrderBookSnapshot:
-        snapshot = OrderBookSnapshot(self.product.id, list(), self.trade_seq, self.log_seq, self.time_window.snapshot())
+        snapshot = OrderBookSnapshot(self.product.id, list(), self.trade_seq, self.log_seq,
+                                    self.time_window.snapshot(), self.last_trade_price)
         for order in self.depths[Side.SideSell].orders.values():
-            snapshot.orders.append(order)
+            snapshot.orders.append(copy.copy(order))
         for order in self.depths[Side.SideBuy].orders.values():
-            snapshot.orders.append(order)
+            snapshot.orders.append(copy.copy(order))
         return snapshot
 
     def restore(self, snapshot: OrderBookSnapshot):
         self.log_seq = snapshot.log_seq
         self.trade_seq = snapshot.trade_seq
+        self.last_trade_price = snapshot.last_trade_price
         self.time_window.restore(snapshot.time_window)
 
         for order in snapshot.orders:
