@@ -1,0 +1,22 @@
+{
+  "product": {
+    "id": "BTC-USD",
+    "base_currency": "BTC",
+    "quote_currency": "USD",
+    "base_scale": 6,
+    "quote_scale": 2
+  },
+  "redis": {
+    "ip": "127.0.0.1",
+    "port": 6379
+  },
+  "kafka": {
+    "brokers": ["127.0.0.1:9092"],
+    "group_id": "order-reader-BTC-USD-group",
+    "message_timeout": 5,
+    "session_timeout": 10
+  },
+  "log": {
+    "level": "INFO"
+  }
+}

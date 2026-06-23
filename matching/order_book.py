@@ -2,18 +2,15 @@
 # encoding: utf-8
 import logging
 import sys
-import copy
 from decimal import Decimal
 from typing import List, Dict
 
 from matching.log import MatchLog, DoneLog, OpenLog
 from models.models import Product, Order
 from models.types import Side, OrderType, TimeInForceType, DoneReason
-from utils.utils import truncate_decimal
-from utils.window import Window, WindowException
+from utils.utils import truncate_decimal, normalize_price, normalize_size
+from utils.time_window import TimeWindow, TimeWindowException, TimeWindowSnapshot, current_time_since_snowflake_epoch
 from pytreemap import TreeMap
-
-ORDER_ID_WINDOW_CAP: int = 10000
 
 
 class DepthException(Exception):
@@ -39,20 +36,106 @@ class BookOrder(object):
                          size=order.size, funds=order.funds, side=order.side,
                          _type=order.type, time_in_force=order.time_in_force)
 
+    def to_dict(self) -> dict:
+        return {
+            "order_id": self.order_id,
+            "user_id": self.user_id,
+            "price": str(self.price),
+            "size": str(self.size),
+            "funds": str(self.funds),
+            "type": self.type.value,
+            "side": self.side.value,
+            "time_in_force": self.time_in_force.value,
+        }
+
+    @staticmethod
+    def from_dict(d: dict):
+        _type = d.get("type")
+        if _type == "limit":
+            order_type = OrderType.OrderTypeLimit
+        elif _type == "market":
+            order_type = OrderType.OrderTypeMarket
+        else:
+            raise DepthException("invalid OrderType")
+
+        side = d.get("side")
+        if side == "buy":
+            order_side = Side.SideBuy
+        elif side == "sell":
+            order_side = Side.SideSell
+        else:
+            raise DepthException("invalid Side")
+
+        time_in_force = d.get("time_in_force")
+        if time_in_force == "GTC":
+            order_time_in_force = TimeInForceType.GoodTillCanceled
+        elif time_in_force == "IOC":
+            order_time_in_force = TimeInForceType.ImmediateOrCancel
+        elif time_in_force == "GTX":
+            order_time_in_force = TimeInForceType.GoodTillCrossing
+        elif time_in_force == "FOK":
+            order_time_in_force = TimeInForceType.FillOrKill
+        else:
+            raise DepthException("invalid TimeInForceType")
+
+        return BookOrder(
+            order_id=int(d.get("order_id")),
+            user_id=int(d.get("user_id")),
+            price=Decimal(d.get("price")),
+            size=Decimal(d.get("size")),
+            funds=Decimal(d.get("funds")),
+            side=order_side,
+            _type=order_type,
+            time_in_force=order_time_in_force,
+        )
+
 
 class OrderBookSnapshot(object):
-    def __init__(self, product_id: str, orders: List, trade_seq: int, log_seq: int, order_id_window: Window):
+    def __init__(self, product_id: str, orders: List, trade_seq: int, log_seq: int, time_window: TimeWindowSnapshot):
         self.product_id: str = product_id
         self.orders: List[BookOrder] = orders
         self.trade_seq: int = trade_seq
         self.log_seq: int = log_seq
-        self.order_id_window: Window = order_id_window
+        self.time_window: TimeWindowSnapshot = time_window
+
+    def to_dict(self) -> dict:
+        return {
+            "product_id": self.product_id,
+            "orders": [o.to_dict() for o in self.orders],
+            "trade_seq": self.trade_seq,
+            "log_seq": self.log_seq,
+            "time_window": self.time_window.to_dict(),
+        }
+
+    @staticmethod
+    def from_dict(d: dict):
+        tw_dict = d.get("time_window")
+        time_window = TimeWindowSnapshot.from_dict(tw_dict) if tw_dict else TimeWindowSnapshot()
+
+        orders_list = d.get("orders") or []
+        orders = [BookOrder.from_dict(o) for o in orders_list]
+
+        return OrderBookSnapshot(
+            product_id=d.get("product_id"),
+            orders=orders,
+            trade_seq=int(d.get("trade_seq", 0)),
+            log_seq=int(d.get("log_seq", 0)),
+            time_window=time_window,
+        )
 
 
 class PriceOrderIdKey(object):
     def __init__(self, price: Decimal, order_id: int):
         self.price = price
         self.order_id = order_id
+
+    def __eq__(self, other):
+        if not isinstance(other, PriceOrderIdKey):
+            return NotImplemented
+        return self.price == other.price and self.order_id == other.order_id
+
+    def __hash__(self):
+        return hash((self.price, self.order_id))
 
 
 def price_order_id_key_asc_comparator(l: PriceOrderIdKey, r: PriceOrderIdKey):
@@ -122,7 +205,7 @@ class OrderBook(object):
         self.depths: Dict[Side, Depth] = dict()
         self.trade_seq = trade_seq
         self.log_seq = log_seq
-        self.order_id_window = Window(0, ORDER_ID_WINDOW_CAP)
+        self.time_window = TimeWindow()
 
         self.depths[Side.SideBuy] = bids
         self.depths[Side.SideSell] = asks
@@ -134,27 +217,26 @@ class OrderBook(object):
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal(sys.float_info.max)
+                taker_order.price = Decimal('Infinity')
             else:
                 taker_order.price = Decimal(0)
 
         maker_depth = self.depths[taker_order.side.opposite()]
 
-        if taker_order.side == Side.SideBuy:
-            e = maker_depth.queue.first_entry()
-            k, v = e.get_key(), e.get_value()
-            if k is None or v is None:
-                return True
+        if len(maker_depth.queue) == 0:
+            return True
 
+        if taker_order.side == Side.SideBuy:
+            v = maker_depth.queue.first_entry().get_value()
+            if v is None:
+                return True
             maker_order: BookOrder = maker_depth.orders[v]
-            if taker_order.price.lt(maker_order.price):
+            if taker_order.price < maker_order.price:
                 return True
         elif taker_order.side == Side.SideSell:
-            e = maker_depth.queue.first_entry()
-            k, v = e.get_key(), e.get_value()
-            if k is None or v is None:
+            v = maker_depth.queue.first_entry().get_value()
+            if v is None:
                 return True
-
             maker_order: BookOrder = maker_depth.orders[v]
             if taker_order.price > maker_order.price:
                 return True
@@ -168,13 +250,15 @@ class OrderBook(object):
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal(sys.float_info.max)
+                taker_order.price = Decimal('Infinity')
             else:
                 taker_order.price = Decimal(0)
 
         maker_depth = self.depths[taker_order.side.opposite()]
         for v in maker_depth.queue.values():
-            maker_order = maker_depth.orders[v]
+            maker_order = maker_depth.orders.get(v)
+            if maker_order is None:
+                continue
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -193,7 +277,7 @@ class OrderBook(object):
                 size = taker_order.size.min(maker_order.size)
                 # adjust the size of taker order
                 taker_order.size = taker_order.size - size
-            elif taker_order.type == OrderType.OrderTypeMarket and taker_order.size == Side.SideBuy:
+            elif taker_order.type == OrderType.OrderTypeMarket and taker_order.side == Side.SideBuy:
                 if taker_order.funds.is_zero():
                     break
 
@@ -218,24 +302,49 @@ class OrderBook(object):
 
         # prevent orders from being submitted repeatedly to the matching engine
         try:
-            self.order_id_window.put(order.id)
-        except WindowException as ex:
-            logging.error("{}".format(str(ex)))
-            return logs
+            now_time = current_time_since_snowflake_epoch()
+            self.time_window.put(order.id, now_time)
+        except TimeWindowException as ex:
+            # Check if this is an "expired" order (window has moved past this order's time)
+            # This can happen when Kafka replays old messages after a restart or rebalance.
+            # If the order is not in the order book, it was never processed or already completed,
+            # so we should process it anyway.
+            found_in_buy = order.id in self.depths[Side.SideBuy].orders
+            found_in_sell = order.id in self.depths[Side.SideSell].orders
+
+            if found_in_buy or found_in_sell:
+                logging.info("expired order {} already in order book, skipping".format(order.id))
+                return logs
+
+            logging.info("expired order {} not in order book, processing anyway".format(order.id))
 
         taker_order = BookOrder.from_order(order)
+
+        # Normalize price and size to product scales
+        taker_order.price = normalize_price(taker_order.price, self.product.quote_scale)
+        taker_order.size = normalize_size(taker_order.size, self.product.base_scale)
 
         # If it's a Market-Buy order, set price to infinite high, and if it's market-sell,
         # set price to zero, which ensures that prices will cross.
         if taker_order.type == OrderType.OrderTypeMarket:
             if taker_order.side == Side.SideBuy:
-                taker_order.price = Decimal(sys.float_info.max)
+                taker_order.price = Decimal('Infinity')
             else:
                 taker_order.price = Decimal(0)
 
-        maker_depth = copy.deepcopy(self.depths[taker_order.side.opposite()])
-        for v in maker_depth.queue.values():
-            maker_order = maker_depth.orders[v]
+        maker_depth = self.depths[taker_order.side.opposite()]
+        # Collect order IDs first to avoid modifying dict while iterating
+        order_ids = list(maker_depth.queue.values())
+
+        for order_id in order_ids:
+            maker_order = maker_depth.orders.get(order_id)
+            if maker_order is None:
+                continue
+            # Clone maker_order to avoid stale reference after decr_size modifies the dict
+            maker_order = BookOrder(
+                order_id=maker_order.order_id, user_id=maker_order.user_id, price=maker_order.price,
+                size=maker_order.size, funds=maker_order.funds, side=maker_order.side,
+                _type=maker_order.type, time_in_force=maker_order.time_in_force)
 
             # check whether there is price crossing between the taker and the maker
             if (taker_order.side == Side.SideBuy and taker_order.price < maker_order.price) or (
@@ -254,7 +363,7 @@ class OrderBook(object):
                 size = taker_order.size.min(maker_order.size)
                 # adjust the size of taker order
                 taker_order.size = taker_order.size - size
-            elif taker_order.type == OrderType.OrderTypeMarket and taker_order.size == Side.SideBuy:
+            elif taker_order.type == OrderType.OrderTypeMarket and taker_order.side == Side.SideBuy:
                 if taker_order.funds.is_zero():
                     break
 
@@ -289,6 +398,14 @@ class OrderBook(object):
                 logging.info("DoneLog: {}".format(DoneLog.to_json_str(done_log)))
                 logs.append(done_log)
 
+            # check if taker is exhausted after this match
+            if taker_order.type == OrderType.OrderTypeLimit:
+                if taker_order.size.is_zero():
+                    break
+            elif taker_order.type == OrderType.OrderTypeMarket:
+                if taker_order.funds.is_zero():
+                    break
+
         if taker_order.type == OrderType.OrderTypeLimit and taker_order.size > 0:
             # If taker has an uncompleted size, put taker in orderBook
             self.depths[taker_order.side].add(taker_order)
@@ -316,9 +433,13 @@ class OrderBook(object):
     def cancel_order(self, order: Order) -> list:
         logs = list()
 
+        if order.side not in self.depths:
+            return logs
+
         try:
-            self.order_id_window.put(order.id)
-        except WindowException as ex:
+            now_time = current_time_since_snowflake_epoch()
+            self.time_window.put(order.id, now_time)
+        except TimeWindowException as ex:
             pass
 
         book_order = self.depths[order.side].orders.get(order.id)
@@ -342,8 +463,9 @@ class OrderBook(object):
         logs = list()
 
         try:
-            self.order_id_window.put(order.id)
-        except WindowException as ex:
+            now_time = current_time_since_snowflake_epoch()
+            self.time_window.put(order.id, now_time)
+        except TimeWindowException as ex:
             pass
 
         book_order = BookOrder.from_order(order)
@@ -354,7 +476,7 @@ class OrderBook(object):
         return logs
 
     def snapshot(self) -> OrderBookSnapshot:
-        snapshot = OrderBookSnapshot(self.product.id, list(), self.trade_seq, self.log_seq, self.order_id_window)
+        snapshot = OrderBookSnapshot(self.product.id, list(), self.trade_seq, self.log_seq, self.time_window.snapshot())
         for order in self.depths[Side.SideSell].orders.values():
             snapshot.orders.append(order)
         for order in self.depths[Side.SideBuy].orders.values():
@@ -364,12 +486,14 @@ class OrderBook(object):
     def restore(self, snapshot: OrderBookSnapshot):
         self.log_seq = snapshot.log_seq
         self.trade_seq = snapshot.trade_seq
-        self.order_id_window = snapshot.order_id_window
-        if self.order_id_window.cap == 0:
-            self.order_id_window = Window(0, ORDER_ID_WINDOW_CAP)
+        self.time_window.restore(snapshot.time_window)
 
         for order in snapshot.orders:
             self.depths[order.side].add(order)
+
+    def cleanup_time_window(self):
+        now_time = current_time_since_snowflake_epoch()
+        self.time_window.cleanup(now_time)
 
     def next_log_seq(self) -> int:
         self.log_seq += 1

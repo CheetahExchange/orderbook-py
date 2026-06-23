@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-from random import random
+import asyncio
 from typing import List
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
@@ -32,8 +32,8 @@ class KafkaProducer(object):
         if len(partitions) == 0:
             raise KafkaException("len(partitions) == 0")
 
-        # partition = partitions[0]
-        partition = random.choice(partitions)
+        # Use first partition to ensure log ordering
+        partition = min(partitions)
 
         await self.producer.send_batch(batch=bat, topic=topic, partition=partition)
 
@@ -52,10 +52,19 @@ class KafkaConsumer(object):
     async def start(self):
         await self.consumer.start()
 
-    def set_offset(self, offset):
-        self.partitions = self.consumer.assignment()
-        if len(self.partitions) == 0:
-            raise KafkaException("len(self.partitions) == 0")
+    async def set_offset(self, offset):
+        # Wait for partition assignment before seeking
+        while True:
+            self.partitions = self.consumer.assignment()
+            if len(self.partitions) > 0:
+                break
+            # Partition not assigned yet, consume one message to trigger assignment
+            try:
+                await asyncio.wait_for(self.consumer.getone(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                continue
 
         for partition in self.partitions:
             self.consumer.seek(partition=partition, offset=offset)

@@ -9,7 +9,7 @@ class RedisClient(object):
         self.redis = aioredis.from_url(url=url)
 
     async def get(self, name):
-        await self.redis.get(name=name)
+        return await self.redis.get(name=name)
 
     async def set(self, name, value):
-        await self.redis.set(name=name, value=value)
+        return await self.redis.set(name=name, value=value)

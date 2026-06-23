@@ -9,18 +9,34 @@ from matching.kafka_order import KafkaOrderReader
 from matching.redis_snapshot import RedisSnapshotStore
 from models.models import Product
 
-from config import *
+from config import read_config
 
 
 async def main():
-    product = Product(_id=product_id, base_currency=base_currency, quote_currency=quote_currency, base_scale=base_scale,
-                      quote_scale=quote_scale)
+    config = read_config()
 
-    snapshot_store = RedisSnapshotStore(product_id=product_id, ip=redis_ip, port=redis_port)
+    product = Product(
+        _id=config.product.id,
+        base_currency=config.product.base_currency,
+        quote_currency=config.product.quote_currency,
+        base_scale=config.product.base_scale,
+        quote_scale=config.product.quote_scale,
+    )
 
-    log_store = KafkaLogStore(product_id=product.id, brokers=kafka_brokers)
+    snapshot_store = RedisSnapshotStore(
+        product_id=config.product.id,
+        ip=config.redis.ip,
+        port=config.redis.port,
+    )
 
-    order_reader = KafkaOrderReader(product_id=product_id, brokers=kafka_brokers, group_id=group_id)
+    log_store = KafkaLogStore(product_id=config.product.id, brokers=config.kafka.brokers)
+    await log_store.start()
+
+    order_reader = KafkaOrderReader(
+        product_id=config.product.id,
+        brokers=config.kafka.brokers,
+        group_id=config.kafka.group_id,
+    )
     await order_reader.start()
 
     # engine
@@ -32,6 +48,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    config = read_config()
     FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(format=FORMAT, level=logging.INFO)
+    logging.basicConfig(format=FORMAT, level=getattr(logging, config.log.level, logging.INFO))
     asyncio.run(main())

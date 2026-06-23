@@ -11,6 +11,19 @@ class OrderException(Exception):
     pass
 
 
+# Maximum allowed exponent for Decimal fields to prevent memory exhaustion
+_MAX_DECIMAL_EXPONENT = 18
+
+
+def _safe_decimal(value: str, field_name: str) -> Decimal:
+    d = Decimal(value)
+    if d.is_infinite() or d.is_nan():
+        raise OrderException("invalid {}: {} is not a finite number".format(field_name, value))
+    if d.adjusted() > _MAX_DECIMAL_EXPONENT:
+        raise OrderException("invalid {}: {} exponent too large".format(field_name, value))
+    return d
+
+
 class Product(object):
     def __init__(self, _id: str, base_currency: str, quote_currency: str, base_scale: int, quote_scale: int):
         self.id: str = _id
@@ -50,9 +63,9 @@ class Order(object):
         order_product_id = order_dict.get("product_id")
         order_user_id = int(order_dict.get("user_id"))
         order_client_oid = order_dict.get("client_oid")
-        order_price = Decimal(order_dict.get("price"))
-        order_size = Decimal(order_dict.get("size"))
-        order_funds = Decimal(order_dict.get("funds"))
+        order_price = _safe_decimal(order_dict.get("price"), "price")
+        order_size = _safe_decimal(order_dict.get("size"), "size")
+        order_funds = _safe_decimal(order_dict.get("funds"), "funds")
 
         _type = order_dict.get("type")
         if _type == "limit":

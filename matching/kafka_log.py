@@ -13,6 +13,9 @@ class KafkaLogStore(object):
         self.topic = "".join([TOPIC_BOOK_MESSAGE_PREFIX, product_id])
         self.log_writer = KafkaProducer(brokers=brokers)
 
+    async def start(self):
+        await self.log_writer.start()
+
     async def store(self, logs: List[Log]):
         payloads = [Log.to_json_str(log).encode("utf8") for log in logs]
         await self.log_writer.send_batch(topic=self.topic, payloads=payloads)
